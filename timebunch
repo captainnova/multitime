@@ -1,0 +1,275 @@
+#!/usr/bin/python
+
+# Group the files or directories in the argument list into directories by time.
+
+from cluster import HierarchicalClustering
+from math import sqrt
+from optparse import OptionParser
+import os, sys, time
+
+gpl = """
+Copyright (C) 2008 Rob Reid, rreid@nrao.edu
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+details.
+
+You should have received a copy of the GNU General Public License along with
+this program; if not, please contact Rob Reid, rreid@nrao.edu, or if he
+cannot be reached, write to the Free Software Foundation, Inc., 59 Temple
+Place, Suite 330, Boston, MA 02111-1307 USA
+"""
+
+parser = OptionParser(usage="%prog [options] file0 file1 ...",
+                      version="%prog 0.9.2",
+                      epilog="""
+Groups file0 file1 ... by the times of their last modification.
+filen can also be a directory, link, etc.
+
+If any groups with at least two members are found, they are moved to
+directories named by the average modification time of their members (see -p).
+""")
+
+parser.add_option('-t', '--time', dest='timelength', default=24.0,
+                  help='min. width of a gap between groups, in hours. (def. 24)')
+parser.add_option('-d', '--dry-run', dest='dryrun', default=False,
+                  action="store_true",
+                  help="""Do not create any directories, but show what would be
+                  done.""")
+parser.add_option('-c', '--color', default=False,
+                  help="""Color theme to use for output.
+                  dark: suitable for a dark background.
+                  bright: suitable for a bright background.
+                  Default: no coloring""")
+parser.add_option('-p', '--prefix', dest='prefix', default=False,
+                  action="store_true",
+                  help="""Attempt to name the directories by the longest common
+                  prefix of their members.""")
+parser.add_option('-v', '--verbose', dest='verbose', default=False,
+                  action="store_true", help='Show time values for each group.')
+parser.add_option('-l', '--license', dest='license', default=False,
+                  action="store_true", help='Print the license and exit.')
+options, files = parser.parse_args(sys.argv[1:])
+
+if options.license:
+    print gpl
+    sys.exit(0)
+    
+if len(files) < 1:
+    parser.print_help()
+    sys.exit(1)
+if len(files) < 3:
+    print "There must be at least 3 items to sort."
+    sys.exit(1)    
+
+timelength = float(options.timelength)
+
+if options.dryrun:
+    options.verbose = True
+
+textpropdict = {
+    'PURPLE': '\033[95m',
+    'CYAN': '\033[96m',
+    'DARKCYAN': '\033[36m',
+    'BLUE': '\033[94m',
+    'GREEN': '\033[92m',
+    'YELLOW': '\033[93m',
+    'RED': '\033[91m',
+    'BOLD': '\033[1m',
+    'UNDERLINE': '\033[4m',
+    'END': '\033[0m'
+    }
+
+class tepr:
+    h = ''     # header
+    subh = ''  # subheader
+    n = ''     # normal
+    
+if hasattr(options.color, 'lower') and options.color.lower() == 'dark':
+    tepr.h = textpropdict['YELLOW'] + textpropdict['BOLD'] + textpropdict['UNDERLINE']
+    tepr.subh = textpropdict['END'] + textpropdict['BOLD'] + textpropdict['GREEN']
+    tepr.n = textpropdict['END']
+        
+# Get mtimes
+mtimes = {}
+for f in files:
+    mtimes[f] = os.stat(f).st_mtime
+
+## Sort files by mtime.
+#files.sort(lambda x, y: cmp(mtimes[x], mtimes[y]))
+
+cl = HierarchicalClustering(files, lambda x, y: abs(mtimes[x] - mtimes[y]))
+bunches = cl.getlevel(3600.0 * timelength)
+
+def report_bunch(bunch, bunchnum, bunches, meantimes, mean, dirname):
+    bunchmean = meantimes[tuple(bunch)]
+    bunchsd = sum([(mtimes[f] - mean - bunchmean)**2 for f in bunch])
+    bunchsd = sqrt(bunchsd / (len(bunch) - 1.0))
+
+    maxdiff = 0.0
+    for i in xrange(1, len(bunch)):
+        diff = mtimes[bunch[i]] - mtimes[bunch[i - 1]]
+        if diff > maxdiff:
+            maxdiff = diff
+            
+    print tepr.h + "Group %2d: %s" % (bunchnum, dirname)
+    print tepr.subh + "  Mean: %.2f\tsd: %.2f\tmaxdiff: %.2f" % (bunchmean, bunchsd, maxdiff),
+
+    if bunchnum > 0:
+        print "\tmean-to-mean: %.2f" % (bunchmean -
+                          meantimes[tuple(bunches[bunchnum - 1])]),
+    else:
+        print "\t\t",
+    if bunchnum < len(bunches) - 1:
+        print "\t%.2f" % (meantimes[tuple(bunches[bunchnum + 1])] -
+                          bunchmean),
+    print
+
+    tfis = [(mtimes[bunch[i]], bunch[i], i) for i in xrange(len(bunch))]
+    tfis.sort()
+    print tepr.n + "\t%s: % 3.2f" % (tfis[0][1], tfis[0][0] - mean - bunchmean)
+    for tfi in tfis[1:]:
+        print "\t%s: % 3.2f\t%.2f" % (tfi[1], tfi[0] - mean - bunchmean,
+                                      tfi[0] - mtimes[bunch[i - 1]])
+
+def report_singlet(bunchnum, bunch, bunches, meantimes):
+    print "Group %2d (%s):\t%2f" % (bunchnum, bunch[0], meantimes[tuple(bunch)]),
+    if bunchnum > 1:
+        print "\t%.2f" % (meantimes[tuple(bunch)] -
+                          meantimes[tuple(bunches[bunchnum - 1])]),
+    if bunchnum < len(bunches) - 1:
+        print "\t%.2f" % (meantimes[tuple(bunches[bunchnum + 1])] -
+                          meantimes[tuple(bunch)]),
+    print "\n",    
+
+class DirectoryNamer:
+    """
+    Returns a callable object for returning a suitable directory name for a
+    collection of items.
+
+    If useprefix is True, it will attempt to use the longest common prefix for
+    the items.  If it fails (no prefix as long as minlength), or useprefix is
+    False, it will use the average modification time, with a format appropriate
+    for the spread of modification times in files.
+    """
+    def __init__(self, useprefix, files, mtimes, minlength=1):
+        self.useprefix = useprefix
+        self.mtimes = mtimes        # Must come before setuptimes().
+        self.setuptimes(files)
+        self.minlength = minlength
+
+    def __call__(self, bunch):
+        if self.useprefix:
+            success, dirname = self.name_from_common_prefix(bunch,
+                                                            self.minlength)
+            if success:           # Otherwise, fall through.
+                return dirname
+        return self.name_from_avgtime(bunch)
+
+    def setuptimes(self, files):
+        _minute = 60.0
+        _hour = 60.0 * _minute
+        _day = 24.0 * _hour
+        _month = 30.5 * _day
+        _year = 12.0 * _month
+        dirnamefmtitems = []
+        spread = self.mtimes[files[-1]] - self.mtimes[files[0]]
+        if spread > _year:
+            dirnamefmtitems.append("%Y")
+        if spread > _month and timelength < _year:        # Month
+            dirnamefmtitems.append("%m")
+        if spread > _day and timelength < _month:
+            dirnamefmtitems.append("%d")
+        if spread > _hour and timelength < _day:
+            dirnamefmtitems.append("%H")                 # 24H
+        if spread > _minute and timelength < _hour:
+            dirnamefmtitems.append("%M")                 # Minute [00,59]
+            if timelength < _minute:
+                dirnamefmtitems.append("%S")
+        if len(dirnamefmtitems) > 0:
+            self.dirnamefmt = '-'.join(dirnamefmtitems)
+            #self.dirnamefmt = self.dirnamefmt.replace('H-', 'H:')
+            #self.dirnamefmt = self.dirnamefmt.replace('Y-', 'Y/')
+        else:
+            self.dirnamefmt = "%Y-%m-%d-%H:%M:%S"
+
+    def name_from_common_prefix(self, items, minlength=1):
+        """
+        Returns (success, prefix) where if success is True, prefix is
+        the longest (at least as long as minlength) common prefix in the list of
+        strings items.  If success is False, prefix may be garbage, since the
+        search may not have gone through all of items.
+        """
+        if minlength < 1:
+            print "Warning: what were you thinking giving minlength =", minlength
+            print "  to name_from_common_prefix()?  Using 1..."
+            minlength = 1
+
+        success = False
+        prefix = items[0]
+        prelen = len(prefix)
+        for item in items[1:]:
+            i = 0
+            if len(item) < prelen:
+                prelen = len(item)
+            while i < prelen and prefix[i] == item[i]:
+                i += 1
+            prelen = i
+            if prelen < minlength:
+                break
+        if prelen >= minlength:
+            if not os.path.isdir(prefix[:prelen]):
+                success = True
+        return success, prefix[:prelen]        
+    
+    def name_from_avgtime(self, bunch):
+        avgtime = sum([self.mtimes[f] for f in bunch]) / nitems
+        return time.strftime(self.dirnamefmt, time.localtime(avgtime))
+
+# Finally: If there is more than one group, move them into directories
+if len(bunches) > 1:
+    if options.verbose:
+        mean = sum([mtimes[f] for f in files]) / len(files)
+        meantimes = {}
+        for grp in bunches:
+            grp.sort(lambda x, y: cmp(mtimes[x], mtimes[y]))
+            meantimes[tuple(grp)] = sum([mtimes[f] - mean for f in grp]) / len(grp)
+        bunches.sort(lambda x, y: cmp(meantimes[tuple(x)], meantimes[tuple(y)]))
+    
+    dn = DirectoryNamer(options.prefix, files, mtimes)
+
+    for bunchnum in xrange(len(bunches)):
+        bunch = bunches[bunchnum]
+        nitems = len(bunch)
+        if nitems > 1:
+            try:
+                dirnamecand = dn(bunch)
+                dirname = dirnamecand
+                dirsubnum = 1
+                while os.path.exists(dirname):
+                    if dirsubnum > 999999:
+                        raise ValueError("There are too many directory name collisions")
+                    dirname = dirnamecand + "%06d" % dirsubnum
+                    dirsubnum += 1
+                if options.verbose:
+                    report_bunch(bunch, bunchnum, bunches,
+                                 meantimes, mean, dirname)
+                if not options.dryrun:
+                    os.makedirs(dirname)
+                    for item in bunch:
+                        os.rename(item, dirname + '/' + item)
+            except Exception, e:
+                print "Error", e
+                print "\tin attempt to move\n\t\t",
+                print "\n\t\t".join(bunch)
+                print "\t to", dirname
+        else:
+            if options.verbose:
+                report_singlet(bunchnum, bunch, bunches, meantimes)
+
