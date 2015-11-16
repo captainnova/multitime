@@ -1,10 +1,40 @@
 #!/usr/bin/python
 
-# Group the files or directories in the argument list into directories by time.
+"""
+Group the files or directories in the argument list into directories by time.
 
-from cluster import HierarchicalClustering
-from optparse import OptionParser
-import os, sys, time
+Usage:
+  timebunch [-c TH] [-d] [-t TI] [-p] [--verbose] FILES...
+  timebunch (-h | -l | --version)
+
+Arguments:
+  FILES    Files to bunch.  They can also be directories, links, etc.
+
+Options:
+  -c TH --color=TH    Color theme to use for output.
+                      dark: suitable for a dark background.
+                      bright: suitable for a bright background. (Not yet implemented)
+                      [default: none]
+  -d --dry-run        Do not make any directories, but show what would be done.
+                      Implies --verbose
+  -h --help           Show this help and exit.
+  -l --license        Print the license and exit.
+  -p --prefix         Attempt to name the directories by the longest common
+                      prefix of their members.
+  -t TI --time=TI     Minimum gap between groups, in the given unit.
+                      TIMEUNITHELP
+                      The default unit is hours.
+                      Examples: 1d = 1 day, 3u = 3e-6s, 4 = 4h.
+                      [default: 24h]
+  --verbose           Show time values for each group.
+  --version           Print the version and exit.
+  
+If any groups with at least two members are found, they are moved to
+directories named by the average modification time of their members (see -p).
+
+Note that the modification time of jpegs can be set to their EXIF time (if any)
+with jhead -ft *.jpg.
+"""
 
 gpl = """
 Copyright (C) 2008-2015 Rob Reid, barlennan@gmail.com
@@ -25,109 +55,55 @@ cannot be reached, write to the Free Software Foundation, Inc., 59 Temple
 Place, Suite 330, Boston, MA 02111-1307 USA
 """
 
-parser = OptionParser(usage="%prog [options] file0 file1 ...",
-                      version="%prog 1.1.0",
-                      epilog="""
-Groups file0 file1 ... by the times of their last modification.
-filen can also be a directory, link, etc.
+from cluster import HierarchicalClustering
+from collections import OrderedDict
+from docopt import docopt
+import os, sys, time
 
-If any groups with at least two members are found, they are moved to
-directories named by the average modification time of their members (see -p).
+tuhindent = [line for line in __doc__.split("\n") if 'TIMEUNITHELP' in line][0].split('T')[0]
+timeunithelp  = "Time units:\n"
+timeunithelp += tuhindent + "letter  # of seconds  definition    comment\n"
+timeunits = OrderedDict([
+    ('a', (1e-18, 'attosecond', 'For computers with')),
+    ('f', (1e-15, 'femtosecond', 'excellent time')),
+    ('p', (1e-12, 'picosecond', 'resolution and even')),
+    ('n', (1e-9, 'nanosecond', 'faster storage')),
+    ('u', (1e-6, 'microsecond', '')),
+    ('s', (1, 'second', '')),
+    ('m', (60, 'minute', '')),
+    ('h', (3600, 'hour', '')),
+    ('d', (24 * 3600, '(solar) day', '')),
+    ('S', (23 * 3600 + 56 * 60 + 4.1, 'Sidereal day', 'For astronomical items')),
+    ('M', (365.25 * 24 * 3600 / 12.0, '(mean) month', '')),
+    ('y', (365.25 * 24 * 3600, '(mean) year', ''))])
+timeunithelp += "\n".join([tuhindent + "%s       % 12g  %- 12s  %s\n" % ((tu,) + tut)
+                           for tu, tut in timeunits.iteritems()])
+__doc__ = __doc__.replace('TIMEUNITHELP', timeunithelp)
 
-Note that the modification time of jpegs can be set to their EXIF time (if any)
-with jhead -ft *.jpg.
-""")
+class Tepr:
+    def __init__(self, theme=None):
+        """Set up the text properties."""
+        self.textpropdict = {
+            'PURPLE': '\033[95m',
+            'CYAN': '\033[96m',
+            'DARKCYAN': '\033[36m',
+            'BLUE': '\033[94m',
+            'GREEN': '\033[92m',
+            'YELLOW': '\033[93m',
+            'RED': '\033[91m',
+            'BOLD': '\033[1m',
+            'UNDERLINE': '\033[4m',
+            'END': '\033[0m'
+            }
+        self.h = ''     # header
+        self.subh = ''  # subheader
+        self.n = ''     # normal
+        if hasattr(theme, 'lower') and theme.lower() == 'dark':
+            self.h = self.textpropdict['YELLOW'] + self.textpropdict['BOLD'] + self.textpropdict['UNDERLINE']
+            self.subh = self.textpropdict['END'] + self.textpropdict['BOLD'] + self.textpropdict['GREEN']
+            self.n = self.textpropdict['END']
 
-timeunithelp = """Time units:
-letter  # of seconds  definition    comment
-"""  
-timeunits = (
-    ('a', 1e-18, 'attosecond', 'For computers with excellent time'),
-    ('f', 1e-15, 'femtosecond', 'resolution and even faster storage'),
-    ('p', 1e-12, 'picosecond', ''),
-    ('n', 1e-9, 'nanosecond', ''),
-    ('u', 1e-6, 'microsecond', ''),
-    ('s', 1, 'second', ''),
-    ('m', 60, 'minute', ''),
-    ('h', 3600, 'hour', ''),
-    ('d', 24 * 3600, '(solar) day', ''),
-    ('S', 23 * 3600 + 56 * 60 + 4.1, 'Sidereal day', 'For astronomical items'),
-    ('M', 365.25 * 24 * 3600 / 12.0, '(mean) month', ''),
-    ('y', 365.25 * 24 * 3600, '(mean) year', ''))
-for tut in timeunits:
-    timeunithelp += "%s       % 12g  %- 12s  %s\n" % tut
-parser.add_option('-t', '--time', dest='timelength', default='24h',
-                  help='min. width of a gap between groups, in the given unit. (defaults to 24h, and the default unit is h)\n%s' % timeunithelp)
-parser.add_option('-d', '--dry-run', dest='dryrun', default=False,
-                  action="store_true",
-                  help="""Do not create any directories, but show what would be
-                  done.""")
-parser.add_option('-c', '--color', default=False,
-                  help="""Color theme to use for output.
-                  dark: suitable for a dark background.
-                  bright: suitable for a bright background.
-                  Default: no coloring""")
-parser.add_option('-p', '--prefix', dest='prefix', default=False,
-                  action="store_true",
-                  help="""Attempt to name the directories by the longest common
-                  prefix of their members.""")
-parser.add_option('-v', '--verbose', dest='verbose', default=False,
-                  action="store_true", help='Show time values for each group.')
-parser.add_option('-l', '--license', dest='license', default=False,
-                  action="store_true", help='Print the license and exit.')
-options, files = parser.parse_args(sys.argv[1:])
-
-if options.license:
-    print gpl
-    sys.exit(0)
-    
-if len(files) < 1:
-    parser.print_help()
-    sys.exit(1)
-if len(files) < 3:
-    print "There must be at least 3 items to sort."
-    sys.exit(1)    
-
-timelength = float(options.timelength)
-
-if options.dryrun:
-    options.verbose = True
-
-textpropdict = {
-    'PURPLE': '\033[95m',
-    'CYAN': '\033[96m',
-    'DARKCYAN': '\033[36m',
-    'BLUE': '\033[94m',
-    'GREEN': '\033[92m',
-    'YELLOW': '\033[93m',
-    'RED': '\033[91m',
-    'BOLD': '\033[1m',
-    'UNDERLINE': '\033[4m',
-    'END': '\033[0m'
-    }
-
-class tepr:
-    h = ''     # header
-    subh = ''  # subheader
-    n = ''     # normal
-    
-if hasattr(options.color, 'lower') and options.color.lower() == 'dark':
-    tepr.h = textpropdict['YELLOW'] + textpropdict['BOLD'] + textpropdict['UNDERLINE']
-    tepr.subh = textpropdict['END'] + textpropdict['BOLD'] + textpropdict['GREEN']
-    tepr.n = textpropdict['END']
-        
-# Get mtimes
-mtimes = {}
-for f in files:
-    mtimes[f] = os.stat(f).st_mtime
-
-## Sort files by mtime.
-#files.sort(lambda x, y: cmp(mtimes[x], mtimes[y]))
-
-cl = HierarchicalClustering(files, lambda x, y: abs(mtimes[x] - mtimes[y]))
-bunches = cl.getlevel(3600.0 * timelength)
-
-def report_bunch(bunch, bunchnum, bunches, meantimes, mean, dirname):
+def report_bunch(bunch, bunchnum, bunches, meantimes, mean, dirname, tepr):
     bunchmean = meantimes[tuple(bunch)]
     bunchsd = sum([(mtimes[f] - mean - bunchmean)**2 for f in bunch])
     bunchsd = (bunchsd / (len(bunch) - 1.0))**0.5
@@ -252,44 +228,78 @@ class DirectoryNamer:
         avgtime = sum([self.mtimes[f] for f in bunch]) / nitems
         return time.strftime(self.dirnamefmt, time.localtime(avgtime))
 
-# Finally: If there is more than one group, move them into directories
-if len(bunches) > 1:
-    if options.verbose:
-        mean = sum([mtimes[f] for f in files]) / len(files)
-        meantimes = {}
-        for grp in bunches:
-            grp.sort(lambda x, y: cmp(mtimes[x], mtimes[y]))
-            meantimes[tuple(grp)] = sum([mtimes[f] - mean for f in grp]) / len(grp)
-        bunches.sort(lambda x, y: cmp(meantimes[tuple(x)], meantimes[tuple(y)]))
-    
-    dn = DirectoryNamer(options.prefix, files, mtimes)
+if __name__ == '__main__':
+    from docopt import docopt
 
-    for bunchnum in xrange(len(bunches)):
-        bunch = bunches[bunchnum]
-        nitems = len(bunch)
-        if nitems > 1:
-            try:
-                dirnamecand = dn(bunch)
-                dirname = dirnamecand
-                dirsubnum = 1
-                while os.path.exists(dirname):
-                    if dirsubnum > 999999:
-                        raise ValueError("There are too many directory name collisions")
-                    dirname = dirnamecand + "%06d" % dirsubnum
-                    dirsubnum += 1
-                if options.verbose:
-                    report_bunch(bunch, bunchnum, bunches,
-                                 meantimes, mean, dirname)
-                if not options.dryrun:
-                    os.makedirs(dirname)
-                    for item in bunch:
-                        os.rename(item, dirname + '/' + item)
-            except Exception, e:
-                print "Error", e
-                print "\tin attempt to move\n\t\t",
-                print "\n\t\t".join(bunch)
-                print "\t to", dirname
-        else:
-            if options.verbose:
-                report_singlet(bunchnum, bunch, bunches, meantimes)
+    args = docopt(__doc__, version="1.1.0")
+
+    if args['--license']:
+        print gpl
+        sys.exit(0)
+
+    if len(args['FILES']) < 3:
+        print "There must be at least 3 items to sort."
+        sys.exit(1)    
+
+    timelength = args['--time']
+    if timelength[-1] not in timeunits:
+        timelength += 'h'
+    tut = timeunits[timelength[-1]]
+    # For historical compatibility, convert timelength to h.
+    timelength = float(timelength[:-1]) * tut[0] / 3600.0
+
+    if args['--dry-run']:
+        args['--verbose'] = True
+        
+    # Get mtimes
+    mtimes = {}
+    for f in args['FILES']:
+        mtimes[f] = os.stat(f).st_mtime
+
+    ## Sort files by mtime.
+    #files.sort(lambda x, y: cmp(mtimes[x], mtimes[y]))
+
+    cl = HierarchicalClustering(args['FILES'], lambda x, y: abs(mtimes[x] - mtimes[y]))
+    bunches = cl.getlevel(3600.0 * timelength)
+
+    # Finally: If there is more than one group, move them into directories
+    if len(bunches) > 1:
+        if args['--verbose']:
+            mean = sum([mtimes[f] for f in args['FILES']]) / len(args['FILES'])
+            meantimes = {}
+            for grp in bunches:
+                grp.sort(lambda x, y: cmp(mtimes[x], mtimes[y]))
+                meantimes[tuple(grp)] = sum([mtimes[f] - mean for f in grp]) / len(grp)
+            bunches.sort(lambda x, y: cmp(meantimes[tuple(x)], meantimes[tuple(y)]))
+
+        dn = DirectoryNamer(args['--prefix'], args['FILES'], mtimes)
+
+        for bunchnum in xrange(len(bunches)):
+            bunch = bunches[bunchnum]
+            nitems = len(bunch)
+            if nitems > 1:
+                try:
+                    dirnamecand = dn(bunch)
+                    dirname = dirnamecand
+                    dirsubnum = 1
+                    while os.path.exists(dirname):
+                        if dirsubnum > 999999:
+                            raise ValueError("There are too many directory name collisions")
+                        dirname = dirnamecand + "%06d" % dirsubnum
+                        dirsubnum += 1
+                    if args['--verbose']:
+                        report_bunch(bunch, bunchnum, bunches,
+                                     meantimes, mean, dirname, Tepr(args['--color']))
+                    if not args['--dry-run']:
+                        os.makedirs(dirname)
+                        for item in bunch:
+                            os.rename(item, dirname + '/' + item)
+                except Exception, e:
+                    print "Error", e
+                    print "\tin attempt to move\n\t\t",
+                    print "\n\t\t".join(bunch)
+                    print "\t to", dirname
+            else:
+                if args['--verbose']:
+                    report_singlet(bunchnum, bunch, bunches, meantimes)
 
