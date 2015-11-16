@@ -1,0 +1,140 @@
+#!/usr/bin/python
+
+"""
+Produces the median of a set of input images after shifting them so that
+the largest feature is coaligned.
+
+Usage:
+  stackimages [-b] OUTFN INFNS...
+  stackimages (-h | --help)
+  stackimages (-v | --version)
+  
+Arguments:
+  OUTFN          Filename for the output
+  INFNS          Input filenames
+
+Options:
+  -b --bkgd      Align the background instead of the largest feature.
+  -h --help      Show this and exit.
+  -v --version   Print version info and exit.
+"""
+
+import numpy as np
+import pyexiv2
+from scipy import misc
+from scipy import ndimage as ndi
+import sys
+
+def read_imstack(fnlist):
+    """
+    Given a list of image filenames, return a list of numpy arrays for
+    the images.
+    """
+    return [misc.imread(fn) for fn in fnlist]
+
+def cent_of_main_feature(img, medrad=(5,5,1), thresh=32):
+    """
+    Return the center of the main feature in img.
+    """
+    med = ndi.median_filter(img.astype(float), size=medrad, mode='constant')
+    med = 1.0 / (1.0 + np.exp(thresh - med))
+    return ndi.center_of_mass(med)
+    
+def align_imstack(instack):
+    """
+    Given a list of images of the same size and dimensionality, return
+    a list of images that have been cropped and shifted to the nearest pixel.
+    """
+    wi, hi = instack[0].shape[:2]
+    cms = np.array(map(cent_of_main_feature, instack))
+    print "centers of mass:"
+    print cms
+    cms -= np.mean(cms, axis=0)
+    #TODO: Account for color shifts.
+    print "Nominal shifts:"
+    print cms
+    cms = np.round(cms).astype(np.int16)
+    mincx = min(cms[:, 0])
+    mincy = min(cms[:, 1])
+    wo = wi - max(cms[:, 0]) + mincx
+    ho = hi - max(cms[:, 1]) + mincy
+    nim = len(instack)
+    outstack = np.zeros((nim, wo, ho, 3), instack[0].dtype)
+    for i in xrange(nim):
+        d = cms[i, :2]
+        xstart = d[0] - mincx
+        xstop = xstart + wo
+        ystart = d[1] - mincy
+        ystop = ystart + ho
+        inim = instack[i]
+        outstack[i] = inim[xstart:xstop, ystart:ystop, :]
+    return outstack
+
+def med_filt_fnlist(fnlist):
+    return np.median(align_imstack(read_imstack(fnlist)), axis=0)
+
+def summarize_exif(fnlist, outfn, comment=""):
+    """
+    Merge the EXIF tags of the images in fnlist, add a comment saying
+    what was done, and write the result to outfn.  outfn must already exist.
+    """
+    out = pyexiv2.ImageMetadata(outfn)
+    out.read()
+    mid = pyexiv2.ImageMetadata(fnlist[len(fnlist) // 2])
+    mid.read()
+    
+    # Does not work and will crash ipython!
+    #out.update(mid)
+
+    for k, v in mid.iteritems():
+        try:
+            out[k] = v.value  # Use value instead of raw_value.
+        except:
+            print k, "could not be copied."
+
+    times = []
+    isos = []
+    exps = []
+    fnumbers = []
+    for f in fnlist:
+        metadata = pyexiv2.ImageMetadata(f)
+        metadata.read()
+        times.append(metadata['Exif.Photo.DateTimeOriginal'].value)
+        isos.append(metadata['Exif.Photo.ISOSpeedRatings'].value)
+        exps.append(metadata['Exif.Photo.ExposureTime'].value)
+        fnumbers.append(metadata['Exif.Photo.FNumber'].value)
+    if not comment:
+        comment = "Median of " + ", ".join(fnlist) + "\n"
+    if len(set([t.date() for t in times])) == 1:
+        comment += "Date: %s\n" % times[0].strftime("%Y-%m-%d")
+        comment += "Times: " + ", ".join([t.strftime("%H:%M:%S")
+                                          for t in times]) + "\n"
+    else:
+        comment += "Times: " + ", ".join([t.strftime("%Y-%m-%d %H:%M:%S")
+                                          for t in times]) + "\n"
+    es = []
+    for e in exps:
+        if e.denominator > 1:
+            es.append("%d/%d" % (e.numerator, e.denominator))
+        else:
+            es.append("%d" % e.numerator)
+    comment += "Exposures: " + ", ".join(es) + "s\n"
+    comment += "ISOs: " + ", ".join(map(str, isos)) + "\n"
+    if len(set(fnumbers)) == 1:
+        comment += "f stop: %.1f\n" % fnumbers[0]
+    else:
+        comment += "f stops: " + ", ".join(["%.1f" % fstop
+                                            for fstop in fnumbers]) # + "\n"
+    out['Exif.Photo.UserComment'] = comment
+    out.write()
+    return out
+    
+if __name__ == '__main__':
+    from docopt import docopt
+
+    args = docopt(__doc__, version="1.1.0")
+
+    medim = med_filt_fnlist(args['INFNS'])
+    misc.imsave(args['OUTFN'], medim)
+    comment = "Made with " + " ".join(sys.argv) + "\n"
+    summarize_exif(sys.argv[2:], sys.argv[1], comment)
