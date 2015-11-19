@@ -24,6 +24,7 @@ import pyexiv2
 from scipy import misc
 from scipy import ndimage as ndi
 import sys
+import ttystatus
 
 def read_imstack(fnlist):
     """
@@ -73,6 +74,106 @@ def align_imstack(instack):
 def med_filt_fnlist(fnlist):
     return np.median(align_imstack(read_imstack(fnlist)), axis=0)
 
+def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
+                             scale=32.0):
+    """
+    Calculates a weighted mean and antimean of aligned_stack.
+
+    Parameters
+    ----------
+    aligned_stack: list of images
+        The images can be a mix of grayscale m x n arrays or RGB m x n x 3 arrays,
+        but they must be aligned.
+    center_of_stack: m x n or m x n x 3 array or None
+        An array representing the nominal center of the stack.
+        If None np.median(aligned_stack, axis=0) will be used.
+    wexp: float
+        Exponent to use for the weighting of the mean and antimean.
+        The higher it is the more the outliers will be dominated by the intensities
+        farthest from center_of_stack's, and the closer the mean will be to a simple
+        average of intensities in the neighborhood of center_of_stack.
+    scale: float
+        The scale of the intensity difference separating outliers from the main
+        distribution.
+
+    Returns
+    -------
+    rmean: np.average(aligned_stack, weights=1.0/(1.0 + z**wexp)),
+        where z = |im - center| / scale
+    routliers: np.average(aligned_stack, weights=z**wexp/(softener + z**wexp))
+    """
+    ni = len(aligned_stack)
+    nx, ny, nc = aligned_stack[0].shape
+
+    # Memory problems...memmap helps but is still thrashy when the stack is
+    # processed in toto.  The problem requires handling the ni axis in one go,
+    # but nx, ny, and/or nc can be split.
+    
+    # stack = np.memmap('stack.mmap', dtype=np.uint8, mode='w+',
+    #                   shape=(ni, ny, nc))
+    # del stack
+    # stack = np.memmap('stack.mmap', dtype=np.uint8, mode='r+',
+    #                   shape=(ni, ny, nc))
+
+    ts = ttystatus.TerminalStatus(period=0.1)
+    ts.add(ttystatus.ElapsedTime())
+    ts.add(ttystatus.Literal(' Initializing arrays: '))
+    ts.clear()
+    ts.add(ttystatus.ElapsedTime())
+    ts.add(ttystatus.Literal(' '))
+    ts.add(ttystatus.Counter('x'))
+    ts.add(ttystatus.Literal(' '))
+    ts.add(ttystatus.PercentDone('done', 'total', decimals=2))
+    ts.add(ttystatus.Literal(' done) '))
+    ts.add(ttystatus.RemainingTime('done', 'total'))
+    ts.add(ttystatus.Literal(' '))
+    ts.add(ttystatus.ProgressBar('done', 'total'))
+    ts['done'] = 0
+    ts['total'] = nx
+
+    cos = np.empty((ny, nc))
+    rmean = np.empty((nx, ny, nc), dtype=np.uint8)
+    routliers = np.empty((nx, ny, nc), dtype=np.uint8)
+    stsl = np.empty((ni, ny, nc), dtype=np.uint8)
+    zwexp = np.empty((ni, ny, nc))
+    
+    for xi in xrange(nx):
+        ts['x'] = xi
+        for ind in xrange(ni):
+            stsl[ind] = aligned_stack[ind][xi]
+        if center_of_stack is None:
+            cos = np.median(stsl, axis=0)
+        else:
+            cos = center_of_stack[xi]
+
+        # zwexp = np.memmap('zwexp.mmap', dtype=float, mode='w+',
+        #                   shape=stack.shape)
+        # del zwexp
+        # zwexp = np.memmap('zwexp.mmap', dtype=float, mode='r+',
+        #                   shape=stack.shape)
+        for ind in xrange(ni):
+            zwexp[ind] = ((stsl[ind] - cos) / scale)**wexp
+
+        # np.average fails when all the weights are 0, which happens for
+        # routliers when all the images agree on the value for a pixel's value
+        # - which can happen since they are integers.  Fortunately that case
+        # means all the images agree, so the weighted average can be replaced
+        # by picking the value from any of the images.
+        szw = zwexp.sum(axis=0)
+        zwexp[0][szw == 0.0] = 1.0
+        
+        # w = np.memmap('w.mmap', dtype=float, mode='w+',
+        #                   shape=stack.shape)
+        # del w
+        # w = np.memmap('w.mmap', dtype=float, mode='r+',
+        #                   shape=stack.shape)
+        w = 1.0/(1.0 + zwexp)
+        rmean[xi] = np.round(np.average(stsl, weights=w, axis=0)).astype(np.uint8)
+        w *= zwexp
+        routliers[xi] = np.round(np.average(stsl, weights=w, axis=0)).astype(np.uint8)
+        ts['done'] += 1
+    return rmean, routliers
+    
 def summarize_exif(fnlist, outfn, comment=""):
     """
     Merge the EXIF tags of the images in fnlist, add a comment saying
