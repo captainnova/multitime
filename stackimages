@@ -6,17 +6,24 @@ the largest feature is coaligned.
 
 Usage:
   stackimages [-b] OUTFN INFNS...
+  stackimages -r RMEAN ROUT INFNS...
   stackimages (-h | --help)
   stackimages (-v | --version)
   
 Arguments:
-  OUTFN          Filename for the output
-  INFNS          Input filenames
+  OUTFN            Filename for the output
+  RMEAN            Filename for the output average image
+  ROUT             Filename for the output outliers image
+  INFNS            Input filenames
 
 Options:
-  -b --bkgd      Align the background instead of the largest feature.
-  -h --help      Show this and exit.
-  -v --version   Print version info and exit.
+  -b --bkgd        Align the background instead of the largest feature.
+  -r --routliers   Instead of aligning the images, produce robust estimates of
+                   their average and outliers.  Alignment can be done ahead of
+                   time with hugin (select write remapped images in the
+                   stitcher).
+  -h --help        Show this and exit.
+  -v --version     Print version info and exit.
 """
 
 import numpy as np
@@ -233,9 +240,17 @@ def summarize_exif(fnlist, outfn, comment=""):
 if __name__ == '__main__':
     from docopt import docopt
 
-    args = docopt(__doc__, version="1.1.0")
+    args = docopt(__doc__, version="1.2.0")
 
-    medim = med_filt_fnlist(args['INFNS'])
-    misc.imsave(args['OUTFN'], medim)
     comment = "Made with " + " ".join(sys.argv) + "\n"
-    summarize_exif(sys.argv[2:], sys.argv[1], comment)
+    if args['--routliers']:
+        stack = read_imstack(args['INFNS'])
+        rmean, routliers = robust_mean_and_outliers(stack)
+        misc.imsave(args['RMEAN'], rmean)
+        misc.imsave(args['ROUT'], routliers)
+        summarize_exif(args['INFNS'], args['RMEAN'], comment)
+        summarize_exif(args['INFNS'], args['ROUT'], comment)
+    else:
+        medim = med_filt_fnlist(args['INFNS'])
+        misc.imsave(args['OUTFN'], medim)
+        summarize_exif(args['INFNS'], args['OUTFN'], comment)
