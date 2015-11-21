@@ -82,7 +82,7 @@ def med_filt_fnlist(fnlist):
     return np.median(align_imstack(read_imstack(fnlist)), axis=0)
 
 def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
-                             scale=32.0):
+                             scale=32.0, softener=0.5):
     """
     Calculates a weighted mean and antimean of aligned_stack.
 
@@ -102,12 +102,18 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
     scale: float
         The scale of the intensity difference separating outliers from the main
         distribution.
+    softener: float > 0
+        This reduces the noise amplification in routliers by mixing some of rmean into
+        it, especially when the outlier amplitude is < scale.  It also avoids a 0/0 in
+        the estimate when a pixel's value is the same for all images, which can happen
+        since the pixel values are integers.
 
     Returns
     -------
     rmean: np.average(aligned_stack, weights=1.0/(1.0 + z**wexp)),
         where z = |im - center| / scale
-    routliers: np.average(aligned_stack, weights=z**wexp/(softener + z**wexp))
+    routliers: np.average(aligned_stack,
+                          weights=(softener**2 + (z**wexp)**2)**0.5/(1.0 + z**wexp))
     """
     ni = len(aligned_stack)
     nx, ny, nc = aligned_stack[0].shape
@@ -143,7 +149,7 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
     routliers = np.empty((nx, ny, nc), dtype=np.uint8)
     stsl = np.empty((ni, ny, nc), dtype=np.uint8)
     zwexp = np.empty((ni, ny, nc))
-    
+    s2 = softener**2
     for xi in xrange(nx):
         ts['x'] = xi
         for ind in xrange(ni):
@@ -153,30 +159,12 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
         else:
             cos = center_of_stack[xi]
 
-        # zwexp = np.memmap('zwexp.mmap', dtype=float, mode='w+',
-        #                   shape=stack.shape)
-        # del zwexp
-        # zwexp = np.memmap('zwexp.mmap', dtype=float, mode='r+',
-        #                   shape=stack.shape)
         for ind in xrange(ni):
             zwexp[ind] = ((stsl[ind] - cos) / scale)**wexp
-
-        # np.average fails when all the weights are 0, which happens for
-        # routliers when all the images agree on the value for a pixel's value
-        # - which can happen since they are integers.  Fortunately that case
-        # means all the images agree, so the weighted average can be replaced
-        # by picking the value from any of the images.
-        szw = zwexp.sum(axis=0)
-        zwexp[0][szw == 0.0] = 1.0
         
-        # w = np.memmap('w.mmap', dtype=float, mode='w+',
-        #                   shape=stack.shape)
-        # del w
-        # w = np.memmap('w.mmap', dtype=float, mode='r+',
-        #                   shape=stack.shape)
         w = 1.0/(1.0 + zwexp)
         rmean[xi] = np.round(np.average(stsl, weights=w, axis=0)).astype(np.uint8)
-        w *= zwexp
+        w = (zwexp**2 + s2)**0.5
         routliers[xi] = np.round(np.average(stsl, weights=w, axis=0)).astype(np.uint8)
         ts['done'] += 1
     return rmean, routliers
