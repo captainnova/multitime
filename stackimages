@@ -2,11 +2,11 @@
 
 """
 Produces the median of a set of input images after shifting them so that
-the largest feature is coaligned.
+the largest bright feature is coaligned.
 
 Usage:
   stackimages [-b] OUTFN INFNS...
-  stackimages -r RMEAN ROUT INFNS...
+  stackimages [-a] -r RMEAN ROUT INFNS...
   stackimages (-h | --help)
   stackimages (-v | --version)
   
@@ -17,11 +17,13 @@ Arguments:
   INFNS            Input filenames
 
 Options:
-  -b --bkgd        Align the background instead of the largest feature.
+  -b --bkgd        (NOT YET IMPLEMENTED) Align the background instead of the
+                   largest feature.
   -r --routliers   Instead of aligning the images, produce robust estimates of
                    their average and outliers.  Alignment can be done ahead of
                    time with hugin (select write remapped images in the
                    stitcher).
+  -a --align       Force aligning to the largest feature even when using -r.
   -h --help        Show this and exit.
   -v --version     Print version info and exit.
 """
@@ -32,6 +34,24 @@ from scipy import misc
 from scipy import ndimage as ndi
 import sys
 import ttystatus
+
+def getProgressBar(n, title=' Progress ', period=0.1, counter='x'):
+    ts = ttystatus.TerminalStatus(period=period)
+    ts.add(ttystatus.ElapsedTime())
+    ts.add(ttystatus.Literal(title))
+    ts.clear()
+    ts.add(ttystatus.ElapsedTime())
+    ts.add(ttystatus.Literal(' '))
+    ts.add(ttystatus.Counter(counter))
+    ts.add(ttystatus.Literal(' of %d ' % n))
+    ts.add(ttystatus.PercentDone('done', 'total', decimals=2))
+    ts.add(ttystatus.Literal(' done '))
+    ts.add(ttystatus.RemainingTime('done', 'total'))
+    ts.add(ttystatus.Literal(' '))
+    ts.add(ttystatus.ProgressBar('done', 'total'))
+    ts['done'] = 0
+    ts['total'] = n
+    return ts
 
 def read_imstack(fnlist):
     """
@@ -53,9 +73,16 @@ def align_imstack(instack):
     Given a list of images of the same size and dimensionality, return
     a list of images that have been cropped and shifted to the nearest pixel.
     """
+    nim = len(instack)
+    ts = getProgressBar(nim, ' Getting centroids: ')
     wi, hi = instack[0].shape[:2]
-    cms = np.array(map(cent_of_main_feature, instack))
-    print "centers of mass:"
+    cms = []
+    for i in xrange(nim):
+        ts['x'] = i
+        cms.append(cent_of_main_feature(instack[i]))
+        ts['done'] += 1
+    cms = np.array(cms)
+    print "\ncenters of mass:"
     print cms
     cms -= np.mean(cms, axis=0)
     #TODO: Account for color shifts.
@@ -66,7 +93,6 @@ def align_imstack(instack):
     mincy = min(cms[:, 1])
     wo = wi - max(cms[:, 0]) + mincx
     ho = hi - max(cms[:, 1]) + mincy
-    nim = len(instack)
     outstack = np.zeros((nim, wo, ho, 3), instack[0].dtype)
     for i in xrange(nim):
         d = cms[i, :2]
@@ -128,21 +154,7 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
     # stack = np.memmap('stack.mmap', dtype=np.uint8, mode='r+',
     #                   shape=(ni, ny, nc))
 
-    ts = ttystatus.TerminalStatus(period=0.1)
-    ts.add(ttystatus.ElapsedTime())
-    ts.add(ttystatus.Literal(' Initializing arrays: '))
-    ts.clear()
-    ts.add(ttystatus.ElapsedTime())
-    ts.add(ttystatus.Literal(' '))
-    ts.add(ttystatus.Counter('x'))
-    ts.add(ttystatus.Literal(' '))
-    ts.add(ttystatus.PercentDone('done', 'total', decimals=2))
-    ts.add(ttystatus.Literal(' done) '))
-    ts.add(ttystatus.RemainingTime('done', 'total'))
-    ts.add(ttystatus.Literal(' '))
-    ts.add(ttystatus.ProgressBar('done', 'total'))
-    ts['done'] = 0
-    ts['total'] = nx
+    ts = getProgressBar(nx, ' Initializing arrays: ')
 
     cos = np.empty((ny, nc))
     rmean = np.empty((nx, ny, nc), dtype=np.uint8)
@@ -167,6 +179,7 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
         w = (zwexp**2 + s2)**0.5
         routliers[xi] = np.round(np.average(stsl, weights=w, axis=0)).astype(np.uint8)
         ts['done'] += 1
+    print # The progress bar needs a \n at the end.
     return rmean, routliers
     
 def summarize_exif(fnlist, outfn, comment=""):
@@ -233,6 +246,8 @@ if __name__ == '__main__':
     comment = "Made with " + " ".join(sys.argv) + "\n"
     if args['--routliers']:
         stack = read_imstack(args['INFNS'])
+        if args['--align']:
+            stack = align_imstack(stack)
         rmean, routliers = robust_mean_and_outliers(stack)
         misc.imsave(args['RMEAN'], rmean)
         misc.imsave(args['ROUT'], routliers)
