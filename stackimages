@@ -6,7 +6,7 @@ the largest bright feature is coaligned.
 
 Usage:
   stackimages [-b] OUTFN INFNS...
-  stackimages [-a] -r RMEAN ROUT INFNS...
+  stackimages [-a] [-c] -r RMEAN ROUT INFNS...
   stackimages (-h | --help)
   stackimages (-v | --version)
   
@@ -24,6 +24,8 @@ Options:
                    time with hugin (select write remapped images in the
                    stitcher).
   -a --align       Force aligning to the largest feature even when using -r.
+  -c --colors      Weight each color seperately when using -r.  This often
+                   produces strange color casts.
   -h --help        Show this and exit.
   -v --version     Print version info and exit.
 """
@@ -108,7 +110,7 @@ def med_filt_fnlist(fnlist):
     return np.median(align_imstack(read_imstack(fnlist)), axis=0)
 
 def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
-                             scale=32.0, softener=0.5):
+                             scale=32.0, softener=0.5, bindcolors=True):
     """
     Calculates a weighted mean and antimean of aligned_stack.
 
@@ -133,6 +135,8 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
         it, especially when the outlier amplitude is < scale.  It also avoids a 0/0 in
         the estimate when a pixel's value is the same for all images, which can happen
         since the pixel values are integers.
+    bindcolors: bool
+        If False, colors are weighted separately, possibly producing odd results.
 
     Returns
     -------
@@ -197,6 +201,14 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
 
         for ind in xrange(ni):
             zwexp[ind] = ((stsl[ind] - cos) / scale)**wexp
+        if bindcolors:  
+            avz = np.mean(zwexp, axis=-1)
+            # This aggravatingly more than doubles the runtime, but unfortunately it's
+            # probably inevitable.  See
+            # http://www.socouldanyone.com/2013/03/converting-grayscale-to-rgb-with-numpy.html
+            #zwexp[:,:,:] = avz[:, :, np.newaxis]
+            for ci in xrange(nc):
+                zwexp[..., ci] = avz
         
         w = 1.0/(1.0 + zwexp)
         #sw = np.sum(w, axis=0)
@@ -274,7 +286,8 @@ if __name__ == '__main__':
         stack = read_imstack(args['INFNS'])
         if args['--align']:
             stack = align_imstack(stack)
-        rmean, routliers = robust_mean_and_outliers(stack)
+        rmean, routliers = robust_mean_and_outliers(stack,
+                                                    bindcolors=not args['--colors'])
         misc.imsave(args['RMEAN'], rmean)
         misc.imsave(args['ROUT'], routliers)
         summarize_exif(args['INFNS'], args['RMEAN'], comment)
