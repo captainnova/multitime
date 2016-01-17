@@ -10,9 +10,12 @@ Tools for handling files (especially images) made at different times.
 
 ## timebunch - groups files into bursts
 timebunch sorts a set of files into subdirectories according to their timestamps by looking for gaps.
-For example, imagine a fireworks show.  A firework is launched and you take a burst of 7 photos separated by a second or so.  A minute or so later another one is launched and you take another burst of photos, but just 6 this time.  When you upload the photos to your computer, they will probably all be in the same directory, and the file names will not make it obvious which burst is which. timebunch will detect that there are two separate bunches of tightly clustered files, and sort them into subdirectories for you.  For more details use timebunch -h.   
+For example, imagine a fireworks show.  A firework is launched and you take a burst of 7 photos separated by a second or so.  A minute or so later another one is launched and you take another burst of photos, but just 6 this time.  When you upload the photos to your computer, they will probably all be in the same directory, and the file names will not make it obvious which burst is which. timebunch will detect that there are two separate bunches of tightly clustered files, and sort them into subdirectories for you.  
+
+Before running it the first time, or for more details, get help with timebunch -h.   
 
 ## stackimages - combine images as layers
+```
   Produces the median of a set of input images after shifting them so that
   the largest bright feature is coaligned.
 
@@ -38,3 +41,4 @@ For example, imagine a fireworks show.  A firework is launched and you take a bu
     -a --align       Force aligning to the largest feature even when using -r.
     -h --help        Show this and exit.
     -v --version     Print version info and exit.
+```
