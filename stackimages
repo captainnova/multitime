@@ -144,6 +144,12 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
     ni = len(aligned_stack)
     nx, ny, nc = aligned_stack[0].shape
 
+    if not nc % 2:  # Assume the last channel is alpha, i.e. RGBA
+        nc -= 1
+        mask_by_alpha = True
+    else:
+        mask_by_alpha = False
+
     # Memory problems...memmap helps but is still thrashy when the stack is
     # processed in toto.  The problem requires handling the ni axis in one go,
     # but nx, ny, and/or nc can be split.
@@ -156,18 +162,36 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
 
     ts = getProgressBar(nx, ' Initializing arrays: ')
 
-    cos = np.empty((ny, nc))
+    #cos = np.empty((ny, nc))
     rmean = np.empty((nx, ny, nc), dtype=np.uint8)
     routliers = np.empty((nx, ny, nc), dtype=np.uint8)
     stsl = np.empty((ni, ny, nc), dtype=np.uint8)
     zwexp = np.empty((ni, ny, nc))
+    if mask_by_alpha:
+        #rmean = np.ma.masked_array(rmean)
+        #routliers = np.ma.masked_array(routliers)
+        stsl = np.ma.masked_array(stsl)
+        stsl.mask = np.zeros_like(stsl)
+        zwexp = np.ma.masked_array(zwexp)
+        avg = np.ma.average
+    else:
+        avg = np.average
+        
     s2 = softener**2
     for xi in xrange(nx):
         ts['x'] = xi
         for ind in xrange(ni):
-            stsl[ind] = aligned_stack[ind][xi]
+            # The :nc is needed when masking by alpha, and harmless otherwise.
+            stsl[ind] = aligned_stack[ind][xi, :, :nc]
         if center_of_stack is None:
-            cos = np.median(stsl, axis=0)
+            if mask_by_alpha:
+                for ind in xrange(ni):
+                    stsl.mask[ind, :, 0] = aligned_stack[ind][xi, :, nc] == 0
+                    for ci in xrange(1, nc): # Broadcast to the other colors
+                        stsl.mask[ind, :, ci] = stsl.mask[ind, :, 0]
+                cos = np.ma.median(stsl, axis=0) # Normal median does NOT work.
+            else:
+                cos = np.median(stsl, axis=0)
         else:
             cos = center_of_stack[xi]
 
@@ -175,9 +199,11 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
             zwexp[ind] = ((stsl[ind] - cos) / scale)**wexp
         
         w = 1.0/(1.0 + zwexp)
-        rmean[xi] = np.round(np.average(stsl, weights=w, axis=0)).astype(np.uint8)
+        #sw = np.sum(w, axis=0)
+        #w[sw == 0] = 1.0
+        rmean[xi] = np.round(avg(stsl, weights=w, axis=0)).astype(np.uint8)
         w = (zwexp**2 + s2)**0.5
-        routliers[xi] = np.round(np.average(stsl, weights=w, axis=0)).astype(np.uint8)
+        routliers[xi] = np.round(avg(stsl, weights=w, axis=0)).astype(np.uint8)
         ts['done'] += 1
     print # The progress bar needs a \n at the end.
     return rmean, routliers
