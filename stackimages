@@ -5,8 +5,8 @@ Produces the median of a set of input images after shifting them so that
 the largest bright feature is coaligned.
 
 Usage:
-  stackimages [-b] OUTFN INFNS...
-  stackimages [-a] [-c] -r RMEAN ROUT INFNS...
+  stackimages [-b] [-e P] OUTFN INFNS...
+  stackimages [-a] [-c] [-e P] -r RMEAN ROUT INFNS...
   stackimages (-h | --help)
   stackimages (-v | --version)
   
@@ -19,6 +19,10 @@ Arguments:
 Options:
   -b --bkgd        (NOT YET IMPLEMENTED) Align the background instead of the
                    largest feature.
+  -e P --exif=P    Look for Exif metadata in the files matching filename
+                   pattern P instead of in INFNS.  Useful when INFNS is a
+                   set of TIFFs remapped by hugin from a set of JPEGs matching
+                   P.  Use quoting to stop the shell from expanding P.
   -r --routliers   Instead of aligning the images, produce robust estimates of
                    their average and outliers.  Alignment can be done ahead of
                    time with hugin (select write remapped images in the
@@ -30,6 +34,7 @@ Options:
   -v --version     Print version info and exit.
 """
 
+from glob import glob
 import numpy as np
 import pyexiv2
 from scipy import misc
@@ -243,6 +248,7 @@ def summarize_exif(fnlist, outfn, comment=""):
     isos = []
     exps = []
     fnumbers = []
+    foci = []
     for f in fnlist:
         metadata = pyexiv2.ImageMetadata(f)
         metadata.read()
@@ -250,6 +256,7 @@ def summarize_exif(fnlist, outfn, comment=""):
         isos.append(metadata['Exif.Photo.ISOSpeedRatings'].value)
         exps.append(metadata['Exif.Photo.ExposureTime'].value)
         fnumbers.append(metadata['Exif.Photo.FNumber'].value)
+        foci.append(metadata['Exif.Photo.FocalLength'].value)
     if not comment:
         comment = "Median of " + ", ".join(fnlist) + "\n"
     if len(set([t.date() for t in times])) == 1:
@@ -271,7 +278,12 @@ def summarize_exif(fnlist, outfn, comment=""):
         comment += "f stop: %.1f\n" % fnumbers[0]
     else:
         comment += "f stops: " + ", ".join(["%.1f" % fstop
-                                            for fstop in fnumbers]) # + "\n"
+                                            for fstop in fnumbers]) + "\n"
+    if len(set(foci)) == 1:
+        comment += "Focal length: %.2f mm\n" % foci[0]
+    else:
+        comment += "Focal lengths: " + ", ".join(["%.2f" % flength
+                                                  for flength in foci])
     out['Exif.Photo.UserComment'] = comment
     out.write()
     return out
@@ -279,7 +291,14 @@ def summarize_exif(fnlist, outfn, comment=""):
 if __name__ == '__main__':
     from docopt import docopt
 
-    args = docopt(__doc__, version="1.2.0")
+    args = docopt(__doc__, version="1.3.0")
+
+    if args['--exif']:
+        exiffns = []
+        for pat in args['--exif'].split():
+            exiffns += glob(pat)
+    else:
+        exiffns = args['INFNS']
 
     comment = "Made with " + " ".join(sys.argv) + "\n"
     if args['--routliers']:
@@ -290,9 +309,9 @@ if __name__ == '__main__':
                                                     bindcolors=not args['--colors'])
         misc.imsave(args['RMEAN'], rmean)
         misc.imsave(args['ROUT'], routliers)
-        summarize_exif(args['INFNS'], args['RMEAN'], comment)
-        summarize_exif(args['INFNS'], args['ROUT'], comment)
+        summarize_exif(exiffns, args['RMEAN'], comment)
+        summarize_exif(exiffns, args['ROUT'], comment)
     else:
         medim = med_filt_fnlist(args['INFNS'])
         misc.imsave(args['OUTFN'], medim)
-        summarize_exif(args['INFNS'], args['OUTFN'], comment)
+        summarize_exif(exiffns, args['OUTFN'], comment)
