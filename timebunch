@@ -55,10 +55,14 @@ cannot be reached, write to the Free Software Foundation, Inc., 59 Temple
 Place, Suite 330, Boston, MA 02111-1307 USA
 """
 
-from cluster import HierarchicalClustering
+#from cluster import HierarchicalClustering
+import fastcluster as fc
 from collections import OrderedDict
 from docopt import docopt
+import numpy as np
 import os, sys, time
+import scipy.cluster.hierarchy as sch
+from scipy.spatial.distance import pdist
 
 tuhindent = [line for line in __doc__.split("\n") if 'TIMEUNITHELP' in line][0].split('T')[0]
 timeunithelp  = "Time units:\n"
@@ -253,14 +257,28 @@ if __name__ == '__main__':
         
     # Get mtimes
     mtimes = {}
+    times = []
     for f in args['FILES']:
         mtimes[f] = os.stat(f).st_mtime
-
+        times.append(mtimes[f])
+    times = np.array([times]).T
+    
     ## Sort files by mtime.
     #files.sort(lambda x, y: cmp(mtimes[x], mtimes[y]))
 
-    cl = HierarchicalClustering(args['FILES'], lambda x, y: abs(mtimes[x] - mtimes[y]))
-    bunches = cl.getlevel(3600.0 * timelength)
+    #cl = HierarchicalClustering(args['FILES'], lambda x, y: abs(mtimes[x] - mtimes[y]))
+    #bunches = cl.getlevel(3600.0 * timelength)
+    d = pdist(times, 'cityblock')
+    dendro = fc.single(d)
+    del d
+    flatclusts = sch.fcluster(dendro, 3600.0 * timelength)
+    del dendro
+    bunches = {}
+    for i, ci in enumerate(flatclusts):
+        if ci not in bunches:
+            bunches[ci] = []
+        bunches[ci].append(i)
+    bunches = [[args['FILES'][i] for i in v] for v in bunches.values()]
 
     # Finally: If there is more than one group, move them into directories
     if len(bunches) > 1:
@@ -274,8 +292,7 @@ if __name__ == '__main__':
 
         dn = DirectoryNamer(args['--prefix'], args['FILES'], mtimes)
 
-        for bunchnum in xrange(len(bunches)):
-            bunch = bunches[bunchnum]
+        for bunchnum, bunch in enumerate(bunches):
             nitems = len(bunch)
             if nitems > 1:
                 try:

@@ -1,5 +1,4 @@
-#!/usr/bin/python
-
+#!/usr/bin/env python
 """
 Produces the median of a set of input images after shifting them so that
 the largest bright feature is coaligned.
@@ -33,7 +32,7 @@ Options:
   -h --help        Show this and exit.
   -v --version     Print version info and exit.
 """
-
+from __future__ import absolute_import, print_function
 from glob import glob
 import numpy as np
 import pyexiv2
@@ -74,7 +73,8 @@ def cent_of_main_feature(img, medrad=(5,5,1), thresh=32):
     med = ndi.median_filter(img.astype(float), size=medrad, mode='constant')
     med = 1.0 / (1.0 + np.exp(thresh - med))
     return ndi.center_of_mass(med)
-    
+
+
 def align_imstack(instack):
     """
     Given a list of images of the same size and dimensionality, return
@@ -84,24 +84,24 @@ def align_imstack(instack):
     ts = getProgressBar(nim, ' Getting centroids: ')
     wi, hi = instack[0].shape[:2]
     cms = []
-    for i in xrange(nim):
+    for i in range(nim):
         ts['x'] = i
         cms.append(cent_of_main_feature(instack[i]))
         ts['done'] += 1
     cms = np.array(cms)
-    print "\ncenters of mass:"
-    print cms
+    print("\ncenters of mass:")
+    print(cms)
     cms -= np.mean(cms, axis=0)
     #TODO: Account for color shifts.
-    print "Nominal shifts:"
-    print cms
+    print("Nominal shifts:")
+    print(cms)
     cms = np.round(cms).astype(np.int16)
     mincx = min(cms[:, 0])
     mincy = min(cms[:, 1])
     wo = wi - max(cms[:, 0]) + mincx
     ho = hi - max(cms[:, 1]) + mincy
     outstack = np.zeros((nim, wo, ho, 3), instack[0].dtype)
-    for i in xrange(nim):
+    for i in range(nim):
         d = cms[i, :2]
         xstart = d[0] - mincx
         xstop = xstart + wo
@@ -111,8 +111,10 @@ def align_imstack(instack):
         outstack[i] = inim[xstart:xstop, ystart:ystop, :]
     return outstack
 
+
 def med_filt_fnlist(fnlist):
     return np.median(align_imstack(read_imstack(fnlist)), axis=0)
+
 
 def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
                              scale=32.0, softener=0.5, bindcolors=True):
@@ -187,16 +189,16 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
         avg = np.average
         
     s2 = softener**2
-    for xi in xrange(nx):
+    for xi in range(nx):
         ts['x'] = xi
-        for ind in xrange(ni):
+        for ind in range(ni):
             # The :nc is needed when masking by alpha, and harmless otherwise.
             stsl[ind] = aligned_stack[ind][xi, :, :nc]
         if center_of_stack is None:
             if mask_by_alpha:
-                for ind in xrange(ni):
+                for ind in range(ni):
                     stsl.mask[ind, :, 0] = aligned_stack[ind][xi, :, nc] == 0
-                    for ci in xrange(1, nc): # Broadcast to the other colors
+                    for ci in range(1, nc): # Broadcast to the other colors
                         stsl.mask[ind, :, ci] = stsl.mask[ind, :, 0]
                 cos = np.ma.median(stsl, axis=0) # Normal median does NOT work.
             else:
@@ -204,7 +206,7 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
         else:
             cos = center_of_stack[xi]
 
-        for ind in xrange(ni):
+        for ind in range(ni):
             zwexp[ind] = ((stsl[ind] - cos) / scale)**wexp
         if bindcolors:  
             avz = np.mean(zwexp, axis=-1)
@@ -212,7 +214,7 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
             # probably inevitable.  See
             # http://www.socouldanyone.com/2013/03/converting-grayscale-to-rgb-with-numpy.html
             #zwexp[:,:,:] = avz[:, :, np.newaxis]
-            for ci in xrange(nc):
+            for ci in range(nc):
                 zwexp[..., ci] = avz
         
         w = 1.0/(1.0 + zwexp)
@@ -222,9 +224,10 @@ def robust_mean_and_outliers(aligned_stack, center_of_stack=None, wexp=4,
         w = (zwexp**2 + s2)**0.5
         routliers[xi] = np.round(avg(stsl, weights=w, axis=0)).astype(np.uint8)
         ts['done'] += 1
-    print # The progress bar needs a \n at the end.
+    print()  # The progress bar needs a \n at the end.
     return rmean, routliers
-    
+
+
 def summarize_exif(fnlist, outfn, comment=""):
     """
     Merge the EXIF tags of the images in fnlist, add a comment saying
@@ -238,11 +241,11 @@ def summarize_exif(fnlist, outfn, comment=""):
     # Does not work and will crash ipython!
     #out.update(mid)
 
-    for k, v in mid.iteritems():
+    for k, v in mid.items():
         try:
             out[k] = v.value  # Use value instead of raw_value.
         except:
-            print k, "could not be copied."
+            print(k, "could not be copied.")
 
     times = []
     isos = []
