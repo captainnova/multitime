@@ -259,11 +259,8 @@ if __name__ == '__main__':
         args['--verbose'] = True
         
     # Get mtimes
-    mtimes = {}
-    times = []
-    for f in args['FILES']:
-        mtimes[f] = os.stat(f).st_mtime
-        times.append(mtimes[f])
+    mtimes = {f: os.stat(f).st_mtime for f in args['FILES']}
+    times = [mtimes[f] for f in args['FILES']]
     times = np.array([times]).T
     
     ## Sort files by mtime.
@@ -274,7 +271,7 @@ if __name__ == '__main__':
     d = pdist(times, 'cityblock')
     dendro = fc.single(d)
     del d
-    flatclusts = sch.fcluster(dendro, 3600.0 * timelength)
+    flatclusts = sch.fcluster(dendro, 3600.0 * timelength, 'distance')
     del dendro
     bunches = {}
     for i, ci in enumerate(flatclusts):
