@@ -12,7 +12,19 @@ Tools for handling files (especially images) made at different times.
 timebunch sorts a set of files into subdirectories according to their timestamps by looking for gaps.
 For example, imagine a fireworks show.  A firework is launched and you take a burst of 7 photos separated by a second or so.  A minute or so later another one is launched and you take another burst of photos, but just 6 this time.  When you upload the photos to your computer, they will probably all be in the same directory, and the file names will not make it obvious which burst is which. timebunch will detect that there are two separate bunches of tightly clustered files, and sort them into subdirectories for you.
 
-Before running it the first time, or for more details, get help with timebunch -h.
+Before running it the first time, or for more details, get help with timebunch
+-h. The -d (dry run) option is highly recommended for tuning the gap interval
+before you commit.
+
+Example: 
+After a recent lunar eclipse I sorted my many shots into subdirectories by ISO,
+using gthumb and rename. I now have a directory full of ISO 640 8s exposures from
+different parts of the eclipse. I want to stack close batches to improve the
+signal to noise ratio, but not *all* of them together, since the Moon moved and
+changed its appearance over the ~2h. Let's try 
+`timebunch -t 32s -d *`
+Looks good! Commit:
+`timebunch -t 32s *`
 
 ## stackimages - combine images as layers
 ```
@@ -49,7 +61,7 @@ Before running it the first time, or for more details, get help with timebunch -
     -h --help        Show this and exit.
     -v --version     Print version info and exit.
 ```
-
+Alternatives for astrophotography: sequator, siril
 
 ## Installation
 ### Requirements
