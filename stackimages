@@ -27,6 +27,7 @@ Options:
                    time with hugin (select write remapped images in the
                    stitcher).
   -a --align       Force aligning to the largest feature even when using -r.
+                   Not recommended; use hugin or its align_image_stack instead.
   -c --colors      Weight each color seperately when using -r.  This often
                    produces strange color casts.
   -h --help        Show this and exit.
@@ -40,6 +41,7 @@ from scipy import misc
 from scipy import ndimage as ndi
 import sys
 import ttystatus
+
 
 def getProgressBar(n, title=' Progress ', period=0.1, counter='x'):
     ts = ttystatus.TerminalStatus(period=period)
@@ -59,12 +61,14 @@ def getProgressBar(n, title=' Progress ', period=0.1, counter='x'):
     ts['total'] = n
     return ts
 
+
 def read_imstack(fnlist):
     """
     Given a list of image filenames, return a list of numpy arrays for
     the images.
     """
     return [misc.imread(fn) for fn in fnlist]
+
 
 def cent_of_main_feature(img, medrad=(5,5,1), thresh=32):
     """
